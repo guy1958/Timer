@@ -1,0 +1,121 @@
+{
+  "editors": [
+    {
+      "id": "timer_value",
+      "ranges": [
+        {
+          "uom": "56",
+          "min": 0,
+          "max": 2147483647,
+          "prec": 0
+        }
+      ]
+    },
+    {
+      "id": "timer_paused",
+      "ranges": [
+        {
+          "uom": "2",
+          "subset": "0,1",
+          "names": {
+            "0": "No",
+            "1": "Yes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ED_CONTROLLER_ST",
+      "ranges": [
+        {
+          "subset": "0,1",
+          "uom": "25",
+          "names": {
+            "0": "Not Connected",
+            "1": "Connected"
+          }
+        }
+      ]
+    }
+  ],
+  "nodedefs": [
+    {
+      "id": "controller",
+      "name": "Timer Controller",
+      "properties": [
+        {
+          "id": "ST",
+          "name": "Status",
+          "editor": "ED_CONTROLLER_ST"
+        }
+      ],
+      "cmds": {
+        "sends": [],
+        "accepts": []
+      },
+      "links": {
+        "ctl": [],
+        "rsp": []
+      }
+    },
+    {
+      "id": "timer",
+      "name": "Timer",
+      "properties": [
+        {
+          "id": "ST",
+          "name": "Value",
+          "editor": "timer_value"
+        },
+        {
+          "id": "PAUSED",
+          "name": "Paused",
+          "editor": "timer_paused"
+        }
+      ],
+      "cmds": {
+        "sends": [],
+        "accepts": [
+          {
+            "id": "START",
+            "name": "Start",
+            "native": "false"
+          },
+          {
+            "id": "SET_VALUE",
+            "name": "Set Value",
+            "native": "false",
+            "parameters": [
+              {
+                "id": "",
+                "name": "Value",
+                "editor": "timer_value",
+                "init": "ST"
+              }
+            ]
+          },
+          {
+            "id": "PAUSE",
+            "name": "Pause",
+            "native": "false"
+          },
+          {
+            "id": "RESUME",
+            "name": "Resume",
+            "native": "false"
+          },
+          {
+            "id": "RESET",
+            "name": "Reset to 0",
+            "native": "false"
+          }
+        ]
+      },
+      "links": {
+        "ctl": [],
+        "rsp": []
+      }
+    }
+  ],
+  "linkdefs": []
+}

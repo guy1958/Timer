@@ -1,0 +1,150 @@
+{
+  "profile": {
+    "editors": [
+      {
+        "id": "timer_value",
+        "ranges": [
+          {
+            "uom": "56",
+            "min": 0,
+            "max": 2147483647,
+            "prec": 0
+          }
+        ]
+      },
+      {
+        "id": "timer_paused",
+        "ranges": [
+          {
+            "uom": "2",
+            "subset": "0,1",
+            "names": {
+              "0": "No",
+              "1": "Yes"
+            }
+          }
+        ]
+      },
+      {
+        "id": "ED_CONTROLLER_ST",
+        "ranges": [
+          {
+            "subset": "0,1",
+            "uom": "25",
+            "names": {
+              "0": "Not Connected",
+              "1": "Connected"
+            }
+          }
+        ]
+      }
+    ],
+    "nodedefs": [
+      {
+        "id": "controller",
+        "name": "Timer Controller",
+        "properties": [
+          {
+            "id": "ST",
+            "name": "Status",
+            "editor": "ED_CONTROLLER_ST"
+          }
+        ],
+        "cmds": {
+          "sends": [],
+          "accepts": []
+        },
+        "links": {
+          "ctl": [],
+          "rsp": []
+        }
+      },
+      {
+        "id": "timer",
+        "name": "Timer",
+        "properties": [
+          {
+            "id": "ST",
+            "name": "Value",
+            "editor": "timer_value"
+          },
+          {
+            "id": "PAUSED",
+            "name": "Paused",
+            "editor": "timer_paused"
+          }
+        ],
+        "cmds": {
+          "sends": [],
+          "accepts": [
+            {
+              "id": "START",
+              "name": "Start",
+              "native": "false"
+            },
+            {
+              "id": "SET_VALUE",
+              "name": "Set Value",
+              "native": "false",
+              "parameters": [
+                {
+                  "id": "",
+                  "name": "Value",
+                  "editor": "timer_value",
+                  "init": "ST"
+                }
+              ]
+            },
+            {
+              "id": "PAUSE",
+              "name": "Pause",
+              "native": "false"
+            },
+            {
+              "id": "RESUME",
+              "name": "Resume",
+              "native": "false"
+            },
+            {
+              "id": "RESET",
+              "name": "Reset to 0",
+              "native": "false"
+            }
+          ]
+        },
+        "links": {
+          "ctl": [],
+          "rsp": []
+        }
+      }
+    ],
+    "linkdefs": []
+  },
+  "server_entry": {
+    "name": "Timer",
+    "desc": "Twenty count-up timer nodes (Timer_1 to Timer_20) whose value programs can test.",
+    "isyAccess": false,
+    "requireEisyui": false,
+    "authorize": false,
+    "discover": false,
+    "webhook_enabled": false,
+    "ai_enabled": false,
+    "fileUpload": false
+  },
+  "readme_body": "# Timer\n\nTwenty count-up timers for eisy programs: `Timer_1` through `Timer_20`.\n\n## Behavior\n\n- Every timer starts at **0** and stays there until you set it.\n- A timer whose value is anything other than 0 counts up by 1 every second.\n- **Value** is a plain number. In a program you can test it with greater than, less than, equal to and so on.\n- **Restart:** whenever the plugin or the system restarts, every timer goes back to 0.\n\n## Commands (on each timer)\n\n| Command | What it does |\n|---|---|\n| Start | Sets the value to 1, clears any pause, and the timer counts up from there. On a timer that is already running it restarts the count at 1. |\n| Set Value | Sets the timer to the number you enter (a whole number, 0 to 2147483647) and starts it counting if it isn't 0. Also clears a pause. Setting 0 stops it. |\n| Pause | Stops counting and keeps the current value. Ignored if the timer is at 0. |\n| Resume | Continues counting from the paused value. |\n| Reset to 0 | Sets the value to 0, stops counting and clears any pause. |\n\nA value that isn't a whole number in range is refused: nothing changes and a warning is logged.\n\n## Properties\n\n- **Value** (`ST`): the current count, as a raw number.\n- **Paused**: Yes while a timer is paused, otherwise No.\n\n## Notes\n\n- A timer counts about once per second, kept in step with a monotonic clock, so it does not drift with the work done on each tick.\n- Nothing is configurable: no keys, accounts or settings are needed.\n- The plugin has no access to eisy beyond its own nodes.\n",
+  "override_bodies": {
+    "start": "    def start(self):\n        import threading\n        import time\n        from udi_interface import LOGGER\n        from timer_node import TimerNode\n\n        count = 20\n        self.timer_nodes = []\n        for i in range(1, count + 1):\n            address = self.poly.getValidAddress('timer_%d' % i)\n            name = self.poly.getValidName('Timer_%d' % i)\n            node = TimerNode(self.poly, self.address, address, name)\n            self.poly.addNode(node)\n            self.timer_nodes.append(node)\n\n        # A restart always begins every timer at 0, whatever IoX last held.\n        for node in self.timer_nodes:\n            try:\n                if hasattr(self.poly, 'waitForNode'):\n                    self.poly.waitForNode(node.address)\n            except Exception as ex:\n                LOGGER.warning('waitForNode(%s) failed: %s', node.address, ex)\n            node.reset_state()\n\n        self._timer_stop = threading.Event()\n\n        def tick_loop():\n            next_t = time.monotonic() + 1.0\n            while not self._timer_stop.is_set():\n                delay = next_t - time.monotonic()\n                if delay > 0 and self._timer_stop.wait(delay):\n                    break\n                next_t += 1.0\n                if time.monotonic() - next_t > 5.0:\n                    # fell far behind (e.g. the host stalled): resume ticking, don't burst\n                    next_t = time.monotonic() + 1.0\n                for node in list(self.timer_nodes):\n                    try:\n                        node.tick()\n                    except Exception:\n                        LOGGER.exception('tick failed for %s', node.address)\n\n        self._timer_thread = threading.Thread(target=tick_loop, name='timer-tick', daemon=True)\n        self._timer_thread.start()\n        LOGGER.info('Timer started: %d timer nodes, all at 0', count)\n",
+    "stop": "    def stop(self):\n        from udi_interface import LOGGER\n        event = getattr(self, '_timer_stop', None)\n        if event is not None:\n            event.set()\n        thread = getattr(self, '_timer_thread', None)\n        if thread is not None:\n            thread.join(timeout=3)\n        LOGGER.info('Timer stopped')\n"
+  },
+  "node_classes": {
+    "timer_node": "\"\"\"Count-up timer node for the Timer plugin.\"\"\"\nimport math\nimport threading\n\nfrom udi_interface import Node, LOGGER\n\nMAX_VALUE = 2147483647\n\n\ndef parse_value(command):\n    \"\"\"Return the requested value as an int in 0..MAX_VALUE, or None if unusable.\"\"\"\n    raw = command.get('value')\n    if raw is None:\n        query = command.get('query') or {}\n        if '' in query:\n            raw = query['']\n        elif len(query) == 1:\n            raw = next(iter(query.values()))\n    try:\n        number = float(raw)\n    except (TypeError, ValueError):\n        return None\n    if not math.isfinite(number) or number != int(number):\n        return None\n    number = int(number)\n    if number < 0 or number > MAX_VALUE:\n        return None\n    return number\n\n\nclass TimerNode(Node):\n    id = \"timer\"\n    drivers = [\n        {'driver': 'ST', 'value': 0, 'uom': 56, 'name': 'Value'},\n        {'driver': 'PAUSED', 'value': 0, 'uom': 2, 'name': 'Paused'},\n    ]\n\n    def __init__(self, polyglot, primary, address, name):\n        super().__init__(polyglot, primary, address, name)\n        self._lock = threading.Lock()\n        self.value = 0\n        self.paused = False\n\n    def _publish(self, force=False):\n        self.setDriver('ST', self.value, True, force)\n        self.setDriver('PAUSED', 1 if self.paused else 0, True, force)\n\n    def reset_state(self):\n        \"\"\"Back to 0 and not paused; always reported, even if unchanged.\"\"\"\n        with self._lock:\n            self.value = 0\n            self.paused = False\n            self._publish(force=True)\n\n    def tick(self):\n        \"\"\"One second elapsed. Counts up only if the value is not 0 and not paused.\"\"\"\n        with self._lock:\n            if self.value == 0 or self.paused:\n                return False\n            if self.value < MAX_VALUE:\n                self.value += 1\n            self.setDriver('ST', self.value)\n            return True\n\n    def set_value(self, number):\n        with self._lock:\n            self.value = number\n            self.paused = False\n            self._publish()\n\n    def pause(self):\n        with self._lock:\n            if self.value == 0 or self.paused:\n                return\n            self.paused = True\n            self._publish()\n\n    def resume(self):\n        with self._lock:\n            if not self.paused:\n                return\n            self.paused = False\n            self._publish()\n\n    def reset(self):\n        with self._lock:\n            self.value = 0\n            self.paused = False\n            self._publish()\n\n    def cmd_start(self, command):\n        \"\"\"Start: set the value to 1 (clearing any pause) so the timer runs.\"\"\"\n        self.set_value(1)\n\n    def cmd_set_value(self, command):\n        number = parse_value(command)\n        if number is None:\n            LOGGER.warning('%s: refused Set Value %r (need a whole number from 0 to %d)',\n                           self.address, command.get('value'), MAX_VALUE)\n            return\n        self.set_value(number)\n\n    def cmd_pause(self, command):\n        self.pause()\n\n    def cmd_resume(self, command):\n        self.resume()\n\n    def cmd_reset(self, command):\n        self.reset()\n\n    commands = {\n        'START': cmd_start,\n        'SET_VALUE': cmd_set_value,\n        'PAUSE': cmd_pause,\n        'RESUME': cmd_resume,\n        'RESET': cmd_reset,\n    }\n"
+  },
+  "tests": {
+    "test_timer_node.py": "import importlib.util\nimport json\nimport logging\nimport os\nimport sys\nimport types\n\nimport pytest\n\nROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))\n\n\nclass FakeNode:\n    def __init__(self, polyglot, primary, address, name):\n        self.poly = polyglot\n        self.primary = primary\n        self.address = address\n        self.name = name\n        self.values = {}\n        self.sent = []\n\n    def setDriver(self, driver, value, report=True, force=False, uom=None, text=None):\n        self.values[driver] = value\n        self.sent.append((driver, value, force))\n\n\n@pytest.fixture\ndef mod(monkeypatch):\n    fake = types.ModuleType('udi_interface')\n    fake.Node = FakeNode\n    fake.LOGGER = logging.getLogger('timer-test')\n    monkeypatch.setitem(sys.modules, 'udi_interface', fake)\n    spec = importlib.util.spec_from_file_location(\n        'timer_node_under_test', os.path.join(ROOT, 'timer_node.py'))\n    m = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(m)\n    return m\n\n\n@pytest.fixture\ndef node(mod):\n    return mod.TimerNode(None, 'controller', 'timer_1', 'Timer_1')\n\n\ndef run(node, cmd, value=None):\n    command = {'cmd': cmd}\n    if value is not None:\n        command['value'] = value\n    node.commands[cmd](node, command)\n\n\ndef test_starts_at_zero(node, mod):\n    assert node.value == 0 and node.paused is False\n    assert all(d['value'] == 0 for d in mod.TimerNode.drivers)\n\n\ndef test_zero_does_not_count(node):\n    for _ in range(5):\n        assert node.tick() is False\n    assert node.value == 0\n\n\ndef test_start_sets_one_and_runs(node):\n    run(node, 'START')\n    assert node.value == 1 and node.values['ST'] == 1\n    assert node.paused is False\n    node.tick()\n    node.tick()\n    assert node.value == 3 and node.values['ST'] == 3\n\n\ndef test_start_clears_pause(node):\n    run(node, 'SET_VALUE', '50')\n    run(node, 'PAUSE')\n    assert node.paused is True\n    run(node, 'START')\n    assert node.value == 1 and node.paused is False\n    assert node.values['PAUSED'] == 0\n    node.tick()\n    assert node.value == 2\n\n\ndef test_start_on_running_timer_restarts_at_one(node):\n    run(node, 'SET_VALUE', '40')\n    run(node, 'START')\n    assert node.value == 1\n\n\ndef test_start_needs_no_value(node):\n    node.commands['START'](node, {'cmd': 'START'})\n    assert node.value == 1\n\n\ndef test_counts_up_from_set_value(node):\n    run(node, 'SET_VALUE', '5')\n    assert node.values['ST'] == 5\n    node.tick()\n    node.tick()\n    assert node.value == 7 and node.values['ST'] == 7\n\n\ndef test_pause_and_resume(node):\n    run(node, 'SET_VALUE', '10')\n    node.tick()\n    run(node, 'PAUSE')\n    assert node.values['PAUSED'] == 1\n    node.tick()\n    node.tick()\n    assert node.value == 11\n    run(node, 'RESUME')\n    assert node.values['PAUSED'] == 0\n    node.tick()\n    assert node.value == 12\n\n\ndef test_pause_ignored_at_zero(node):\n    run(node, 'PAUSE')\n    assert node.paused is False and node.values.get('PAUSED', 0) == 0\n\n\ndef test_set_value_clears_pause(node):\n    run(node, 'SET_VALUE', '3')\n    run(node, 'PAUSE')\n    run(node, 'SET_VALUE', '20')\n    assert node.paused is False\n    node.tick()\n    assert node.value == 21\n\n\ndef test_set_zero_and_reset_stop_counting(node):\n    run(node, 'SET_VALUE', '9')\n    run(node, 'PAUSE')\n    run(node, 'RESET')\n    assert node.value == 0 and node.paused is False\n    assert node.values['ST'] == 0 and node.values['PAUSED'] == 0\n    assert node.tick() is False\n    run(node, 'SET_VALUE', '4')\n    run(node, 'SET_VALUE', '0')\n    assert node.value == 0 and node.tick() is False\n\n\n@pytest.mark.parametrize('bad', ['abc', '', '-1', '1.5', '2147483648', 'nan', 'inf', '-inf'])\ndef test_bad_values_refused(node, bad):\n    run(node, 'SET_VALUE', '8')\n    run(node, 'SET_VALUE', bad)\n    assert node.value == 8\n\n\ndef test_missing_value_refused(node):\n    run(node, 'SET_VALUE', '8')\n    run(node, 'SET_VALUE')\n    assert node.value == 8\n\n\ndef test_whole_float_text_accepted(node):\n    run(node, 'SET_VALUE', '7.0')\n    assert node.value == 7\n\n\ndef test_value_in_query_is_accepted(node):\n    node.commands['SET_VALUE'](node, {'cmd': 'SET_VALUE', 'query': {'': '15'}})\n    assert node.value == 15\n\n\ndef test_caps_at_max(node, mod):\n    run(node, 'SET_VALUE', str(mod.MAX_VALUE))\n    node.tick()\n    assert node.value == mod.MAX_VALUE\n\n\ndef test_reset_state_always_reports(node):\n    node.reset_state()\n    assert ('ST', 0, True) in node.sent and ('PAUSED', 0, True) in node.sent\n\n\ndef test_commands_match_profile(mod):\n    with open(os.path.join(ROOT, 'profile.json')) as f:\n        profile = json.load(f)\n    nodedefs = {n['id']: n for n in profile['nodedefs']}\n    assert set(nodedefs) == {'controller', 'timer'}\n    accepts = {c['id'] for c in nodedefs['timer']['cmds']['accepts']}\n    assert accepts == set(mod.TimerNode.commands)\n    assert 'START' in accepts\n    assert mod.TimerNode.id == 'timer'\n    for fn in mod.TimerNode.commands.values():\n        assert callable(fn) and not hasattr(fn, '__self__')\n    props = {p['id'] for p in nodedefs['timer']['properties']}\n    assert props == {d['driver'] for d in mod.TimerNode.drivers}\n    assert 'ST' in props\n"
+  },
+  "custom_param_docs": null,
+  "custom_typed_params": null,
+  "controller_class": "Controller",
+  "controller_module": "plugin",
+  "version": "1.1.0"
+}

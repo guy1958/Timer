@@ -1,0 +1,18 @@
+{
+  "name": "Timer",
+  "status": "active",
+  "developer": "guy@lavoie.com",
+  "author": "Guy Lavoie",
+  "purchaseOptions": [],
+  "type": "python3",
+  "path": "/usr/home/eisy-ai/generated_plugins/timer",
+  "executable": "main.py",
+  "runAs": "admin",
+  "install": "install.sh",
+  "desc": "Twenty count-up timer nodes (Timer_1 to Timer_20) whose value programs can test.",
+  "discover": false,
+  "fileUpload": false,
+  "isyAccess": false,
+  "requireEisyui": false,
+  "nsid": "dd24de3d-e307-40c8-9bc3-a48b5d4d236b"
+}
